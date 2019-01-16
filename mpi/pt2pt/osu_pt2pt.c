@@ -336,8 +336,9 @@ init_accel (void)
 		hipGetDeviceCount(&dev_count);
                 local_rank = atoi(str);
                 dev_id = local_rank % dev_count;
-
-               }
+            }
+            if (hipSetDevice(dev_id) != hipSuccess)
+                return 1;
             break;
 #endif
         default:
