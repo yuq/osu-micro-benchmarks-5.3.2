@@ -50,11 +50,11 @@
 
 #define MAX_REQ_NUM 1000
 
-#define MAX_MSG_SIZE (1<<28)
+#define MAX_MSG_SIZE (1<<27)
 #define MYBUFSIZE (MAX_MSG_SIZE)
 
 #define WINDOW_SIZE_LARGE  64
-#define LARGE_MESSAGE_SIZE  (1<<25)
+#define LARGE_MESSAGE_SIZE  8192
 
 #ifdef _ENABLE_OPENACC_
 #   define OPENACC_ENABLED 1
