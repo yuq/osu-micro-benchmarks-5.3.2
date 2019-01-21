@@ -233,6 +233,7 @@ process_options (int argc, char *argv[], int type)
                 case 'D':
                 case 'H':
                 case 'M':
+                case 'P':
                     break;
                 default:
                     return po_bad_usage;
@@ -242,6 +243,7 @@ process_options (int argc, char *argv[], int type)
                 case 'D':
                 case 'H':
                 case 'M':
+                case 'P':
                     break;
                 default:
                     return po_bad_usage;
@@ -257,6 +259,7 @@ process_options (int argc, char *argv[], int type)
                 case 'D':
                 case 'H':
                 case 'M':
+                case 'P':
                     break;
                 default:
                     return po_bad_usage;
@@ -266,6 +269,7 @@ process_options (int argc, char *argv[], int type)
                 case 'D':
                 case 'H':
                 case 'M':
+                case 'P':
                     break;
                 default:
                     return po_bad_usage;
@@ -376,6 +380,42 @@ allocate_managed_buffer (char ** buffer)
 }
 
 int
+allocate_pinned_buffer (char ** buffer)
+{
+    switch (options.accel) {
+#ifdef _ENABLE_CUDA_
+        case cuda:
+        {
+            cudaError_t cuerr = cudaMallocHost((void **)buffer, MYBUFSIZE);
+
+            if (cudaSuccess != cuerr) {
+                fprintf(stderr, "Could not allocate pinned memory\n");
+                return 1;
+            }
+            break;
+        }
+#endif
+#ifdef _ENABLE_ROCM_
+        case rocm:
+        {
+            hipError_t hiperr = hipMallocHost((void **)buffer, MYBUFSIZE);
+
+            if (hipSuccess != hiperr) {
+                fprintf(stderr, "Could not allocate pinned memory\n");
+                return 1;
+            }
+            break;
+        }
+#endif
+        default:
+            fprintf(stderr, "Could not allocate pinned memory\n");
+            return 1;
+
+    }
+    return 0;
+}
+
+int
 allocate_device_buffer (char ** buffer)
 {
 #ifdef _ENABLE_CUDA_
@@ -449,6 +489,18 @@ allocate_memory (char ** sbuf, char ** rbuf, int rank)
                 }
             }
 
+            else if ('P' == options.src) {
+                if (allocate_pinned_buffer(sbuf)) {
+                    fprintf(stderr, "Error allocating gpu pinned memory\n");
+                    return 1;
+                }
+
+                if (allocate_pinned_buffer(rbuf)) {
+                    fprintf(stderr, "Error allocating gpu pinned memory\n");
+                    return 1;
+                }
+            }
+
             else {
                 if (posix_memalign((void**)sbuf, align_size, MYBUFSIZE)) {
                     fprintf(stderr, "Error allocating host memory\n");
@@ -482,6 +534,18 @@ allocate_memory (char ** sbuf, char ** rbuf, int rank)
 
                 if (allocate_managed_buffer(rbuf)) {
                     fprintf(stderr, "Error allocating cuda unified memory\n");
+                    return 1;
+                }
+            }
+
+            else if ('P' == options.dst) {
+                if (allocate_pinned_buffer(sbuf)) {
+                    fprintf(stderr, "Error allocating gpu pinned memory\n");
+                    return 1;
+                }
+
+                if (allocate_pinned_buffer(rbuf)) {
+                    fprintf(stderr, "Error allocating gpu pinned memory\n");
                     return 1;
                 }
             }
@@ -527,8 +591,8 @@ print_header (int rank, int type)
             case rocm:
             case openacc:
                 printf("# Send Buffer on %s and Receive Buffer on %s\n",
-                        'M' == options.src ? "MANAGED (M)" : ('D' == options.src ? "DEVICE (D)" : "HOST (H)"),
-                        'M' == options.dst ? "MANAGED (M)" : ('D' == options.dst ? "DEVICE (D)" : "HOST (H)"));
+                       'P' == options.src ? "PINNED (P)" : ('M' == options.src ? "MANAGED (M)" : ('D' == options.src ? "DEVICE (D)" : "HOST (H)")),
+                       'P' == options.dst ? "PINNED (P)" : ('M' == options.dst ? "MANAGED (M)" : ('D' == options.dst ? "DEVICE (D)" : "HOST (H)")));
             default:
                 if (type == BW) {
                     printf("%-*s%*s\n", 10, "# Size", FIELD_WIDTH, "Bandwidth (MB/s)");
@@ -616,6 +680,28 @@ free_device_buffer (void * buf)
 }
 
 int
+free_pinned_buffer (void * buf)
+{
+    switch (options.accel) {
+#ifdef _ENABLE_CUDA_
+        case cuda:
+            cudaFreeHost(buf);
+            break;
+#endif
+#ifdef _ENABLE_ROCM_
+        case rocm:
+            hipFreeHost(buf);
+            break;
+#endif
+        default:
+            /* unknown device */
+            return 1;
+    }
+
+    return 0;
+}
+
+int
 cleanup_accel (void)
 {
 #ifdef _ENABLE_CUDA_
@@ -661,6 +747,11 @@ free_memory (void * sbuf, void * rbuf, int rank)
                 free_device_buffer(rbuf);
             }
 
+            else if ('P' == options.src) {
+                free_pinned_buffer(sbuf);
+                free_pinned_buffer(rbuf);
+            }
+
             else {
                 free(sbuf);
                 free(rbuf);
@@ -670,6 +761,11 @@ free_memory (void * sbuf, void * rbuf, int rank)
             if ('D' == options.dst || 'M' == options.dst) {
                 free_device_buffer(sbuf);
                 free_device_buffer(rbuf);
+            }
+
+            else if ('P' == options.dst) {
+                free_pinned_buffer(sbuf);
+                free_pinned_buffer(rbuf);
             }
 
             else {
