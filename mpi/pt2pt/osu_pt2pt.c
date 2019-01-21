@@ -367,11 +367,6 @@ allocate_managed_buffer (char ** buffer)
             }
             break;
 #endif
-#ifdef _ENABLE_ROCM_
-        case rocm:
-            hipMallocHost((void **)buffer, MYBUFSIZE);
-            break;
-#endif
         default:
             fprintf(stderr, "Could not allocate device memory\n");
             return 1;
