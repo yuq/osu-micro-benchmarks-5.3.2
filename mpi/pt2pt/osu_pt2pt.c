@@ -418,20 +418,18 @@ allocate_pinned_buffer (char ** buffer)
 int
 allocate_device_buffer (char ** buffer)
 {
-#ifdef _ENABLE_CUDA_
-    cudaError_t cuerr = cudaSuccess;
-#endif
-
     switch (options.accel) {
 #ifdef _ENABLE_CUDA_
         case cuda:
-            cuerr = cudaMalloc((void **)buffer, MYBUFSIZE);
+        {
+            cudaError_t cuerr = cudaMalloc((void **)buffer, MYBUFSIZE);
 
             if (cudaSuccess != cuerr) {
                 fprintf(stderr, "Could not allocate device memory\n");
                 return 1;
             }
             break;
+        }
 #endif
 #ifdef _ENABLE_OPENACC_
         case openacc:
@@ -444,10 +442,15 @@ allocate_device_buffer (char ** buffer)
 #endif
 #ifdef _ENABLE_ROCM_
         case rocm:
-{
-            hipMalloc((void**) buffer, MYBUFSIZE);
-}
+        {
+            hipError_t hiperr = hipMalloc((void**) buffer, MYBUFSIZE);
+
+            if (hipSuccess != hiperr) {
+                fprintf(stderr, "Could not allocate device memory\n");
+                return 1;
+            }
             break;
+        }
 #endif
 
         default:
