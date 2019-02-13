@@ -33,8 +33,26 @@ main (int argc, char *argv[])
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
-    if (myid==0) hipSetDevice(options.srcgid);  //select the gpu
-    if (myid==1) hipSetDevice(options.dstgid);
+
+    if (myid==0) {
+#ifdef _ENABLE_CUDA_
+      cudaSetDevice(options.srcgid);
+#endif
+
+#ifdef _ENABLE_ROCM_
+      hipSetDevice(options.srcgid);
+#endif
+    }
+
+    if (myid==1) {
+#ifdef _ENABLE_CUDA_
+      cudaSetDevice(options.dstgid);
+#endif
+
+#ifdef _ENABLE_ROCM_
+      hipSetDevice(options.dstgid);
+#endif
+    }
 
     if (0 == myid) {
         switch (po_ret) {
