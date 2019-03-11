@@ -234,6 +234,7 @@ process_options (int argc, char *argv[], int type)
                 case 'H':
                 case 'M':
                 case 'P':
+                case 'R':
                     break;
                 default:
                     return po_bad_usage;
@@ -244,6 +245,7 @@ process_options (int argc, char *argv[], int type)
                 case 'H':
                 case 'M':
                 case 'P':
+                case 'R':
                     break;
                 default:
                     return po_bad_usage;
@@ -260,6 +262,7 @@ process_options (int argc, char *argv[], int type)
                 case 'H':
                 case 'M':
                 case 'P':
+                case 'R':
                     break;
                 default:
                     return po_bad_usage;
@@ -270,6 +273,7 @@ process_options (int argc, char *argv[], int type)
                 case 'H':
                 case 'M':
                 case 'P':
+                case 'R':
                     break;
                 default:
                     return po_bad_usage;
@@ -416,6 +420,56 @@ allocate_pinned_buffer (char ** buffer)
 }
 
 int
+allocate_register_buffer (char ** buffer)
+{
+    unsigned long align_size = sysconf(_SC_PAGESIZE);
+
+    switch (options.accel) {
+#ifdef _ENABLE_CUDA_
+        case cuda:
+        {
+            if (posix_memalign((void**)buffer, align_size, MYBUFSIZE)) {
+                fprintf(stderr, "Could not allocate register memory\n");
+                return 1;
+            }
+
+            cudaError_t cuerr = cudaHostRegister((void *)*buffer, MYBUFSIZE,
+                                                 cudaHostRegisterDefault);
+
+            if (cudaSuccess != cuerr) {
+                fprintf(stderr, "Could not register host memory\n");
+                return 1;
+            }
+            break;
+        }
+#endif
+#ifdef _ENABLE_ROCM_
+        case rocm:
+        {
+            if (posix_memalign((void**)buffer, align_size, MYBUFSIZE)) {
+                fprintf(stderr, "Could not allocate register memory\n");
+                return 1;
+            }
+
+            hipError_t hiperr = hipHostRegister((void *)*buffer, MYBUFSIZE,
+                                                hipHostRegisterDefault);
+
+            if (hipSuccess != hiperr) {
+                fprintf(stderr, "Could not register host memory\n");
+                return 1;
+            }
+            break;
+        }
+#endif
+        default:
+            fprintf(stderr, "Could not allocate register memory\n");
+            return 1;
+
+    }
+    return 0;
+}
+
+int
 allocate_device_buffer (char ** buffer)
 {
     switch (options.accel) {
@@ -504,6 +558,18 @@ allocate_memory (char ** sbuf, char ** rbuf, int rank)
                 }
             }
 
+            else if ('R' == options.src) {
+                if (allocate_register_buffer(sbuf)) {
+                    fprintf(stderr, "Error allocating gpu register memory\n");
+                    return 1;
+                }
+
+                if (allocate_register_buffer(rbuf)) {
+                    fprintf(stderr, "Error allocating gpu register memory\n");
+                    return 1;
+                }
+            }
+
             else {
                 if (posix_memalign((void**)sbuf, align_size, MYBUFSIZE)) {
                     fprintf(stderr, "Error allocating host memory\n");
@@ -553,6 +619,18 @@ allocate_memory (char ** sbuf, char ** rbuf, int rank)
                 }
             }
 
+            else if ('R' == options.src) {
+                if (allocate_register_buffer(sbuf)) {
+                    fprintf(stderr, "Error allocating gpu register memory\n");
+                    return 1;
+                }
+
+                if (allocate_register_buffer(rbuf)) {
+                    fprintf(stderr, "Error allocating gpu register memory\n");
+                    return 1;
+                }
+            }
+
             else {
                 if (posix_memalign((void**)sbuf, align_size, MYBUFSIZE)) {
                     fprintf(stderr, "Error allocating host memory\n");
@@ -594,8 +672,8 @@ print_header (int rank, int type)
             case rocm:
             case openacc:
                 printf("# Send Buffer on %s and Receive Buffer on %s\n",
-                       'P' == options.src ? "PINNED (P)" : ('M' == options.src ? "MANAGED (M)" : ('D' == options.src ? "DEVICE (D)" : "HOST (H)")),
-                       'P' == options.dst ? "PINNED (P)" : ('M' == options.dst ? "MANAGED (M)" : ('D' == options.dst ? "DEVICE (D)" : "HOST (H)")));
+                       'R' == options.src ? "REGISTERED (R)" : ('P' == options.src ? "PINNED (P)" : ('M' == options.src ? "MANAGED (M)" : ('D' == options.src ? "DEVICE (D)" : "HOST (H)"))),
+                       'R' == options.src ? "REGISTERED (R)" : ('P' == options.dst ? "PINNED (P)" : ('M' == options.dst ? "MANAGED (M)" : ('D' == options.dst ? "DEVICE (D)" : "HOST (H)"))));
             default:
                 if (type == BW) {
                     printf("%-*s%*s\n", 10, "# Size", FIELD_WIDTH, "Bandwidth (MB/s)");
@@ -643,8 +721,8 @@ set_device_memory (void * ptr, int data, size_t size)
 void
 touch_data (void * sbuf, void * rbuf, int rank, size_t size)
 {
-    if ((0 == rank && 'H' == options.src) ||
-            (1 == rank && 'H' == options.dst)) {
+    if ((0 == rank && ('H' == options.src || 'R' == options.src)) ||
+        (1 == rank && ('H' == options.dst || 'R' == options.dst))) {
         memset(sbuf, 'a', size);
         memset(rbuf, 'b', size);
     } else {
@@ -694,6 +772,30 @@ free_pinned_buffer (void * buf)
 #ifdef _ENABLE_ROCM_
         case rocm:
             hipFreeHost(buf);
+            break;
+#endif
+        default:
+            /* unknown device */
+            return 1;
+    }
+
+    return 0;
+}
+
+int
+free_register_buffer (void * buf)
+{
+    switch (options.accel) {
+#ifdef _ENABLE_CUDA_
+        case cuda:
+            cudaHostUnregister(buf);
+            free(buf);
+            break;
+#endif
+#ifdef _ENABLE_ROCM_
+        case rocm:
+            hipHostUnregister(buf);
+            free(buf);
             break;
 #endif
         default:
@@ -755,6 +857,11 @@ free_memory (void * sbuf, void * rbuf, int rank)
                 free_pinned_buffer(rbuf);
             }
 
+            else if ('R' == options.src) {
+                free_register_buffer(sbuf);
+                free_register_buffer(rbuf);
+            }
+
             else {
                 free(sbuf);
                 free(rbuf);
@@ -769,6 +876,11 @@ free_memory (void * sbuf, void * rbuf, int rank)
             else if ('P' == options.dst) {
                 free_pinned_buffer(sbuf);
                 free_pinned_buffer(rbuf);
+            }
+
+            else if ('R' == options.src) {
+                free_register_buffer(sbuf);
+                free_register_buffer(rbuf);
             }
 
             else {
